@@ -1,0 +1,510 @@
+# =============================================================================
+# PCF8563/BM8563 Real-Time Clock Device Driver Definition
+# =============================================================================
+# This file defines the register map and configuration for the PCF8563
+# Real-Time Clock IC manufactured by NXP (and BM8563 clone).
+#
+# Features:
+# - Year, month, day, weekday, hours, minutes, seconds
+# - Century flag
+# - Low backup current (~0.25µA at 3.0V)
+# - Programmable clock output (32.768kHz, 1.024kHz, 32Hz, 1Hz)
+# - Alarm and timer functions
+# - Voltage-low detector
+#
+# Interface: I2C (up to 400kHz)
+# Slave address: 0x51 (7-bit) / 0xA2 write, 0xA3 read (8-bit)
+# =============================================================================
+
+config:
+  # Address type for all registers (8-bit addressing)
+  register_address_type: u8
+
+  # Default byte order - not really relevant for 8-bit registers
+  default_byte_order: BE
+
+  # Default bit order - LSB0 (bit 0 is least significant)
+  default_bit_order: LSB0
+
+  # Default access patterns
+  default_register_access: RW
+  default_field_access: RW
+
+  # Enable defmt support for debugging
+  defmt_feature: "defmt"
+
+  # Name conversion for register/field names
+  name_word_boundaries: ["Underscore", "Hyphen", "LowerUpper", "UpperDigit", "DigitUpper"]
+
+# =============================================================================
+# CONTROL AND STATUS REGISTERS
+# =============================================================================
+
+ControlStatus1:
+  type: register
+  address: 0x00
+  size_bits: 8
+  access: RW
+  reset_value: 0x08
+  description: |
+    Control and status register 1.
+    Controls clock operation, test modes, and power-on reset override.
+  fields:
+    test1:
+      base: bool
+      start: 7
+      description: |
+        EXT_CLK test mode.
+        - false (0): Normal mode (default)
+        - true (1): EXT_CLK test mode - CLKOUT becomes input for external clock
+    stop:
+      base: bool
+      start: 5
+      description: |
+        RTC clock stop control.
+        - false (0): RTC source clock runs
+        - true (1): RTC clock stopped, all divider flip-flops reset to 0
+                    (CLKOUT at 32.768kHz still available)
+    testc:
+      base: bool
+      start: 3
+      description: |
+        Power-On Reset (POR) override facility.
+        - false (0): POR override disabled (normal operation)
+        - true (1): POR override may be enabled
+
+ControlStatus2:
+  type: register
+  address: 0x01
+  size_bits: 8
+  access: RW
+  reset_value: 0x00
+  description: |
+    Control and status register 2.
+    Controls timer/alarm interrupts and flags.
+  fields:
+    ti_tp:
+      base: bool
+      start: 4
+      description: |
+        Timer interrupt mode.
+        - false (0): INT active when TF is active (level mode)
+        - true (1): INT pulses active (pulse mode)
+    af:
+      base: bool
+      start: 3
+      description: |
+        Alarm flag.
+        Read: false = alarm inactive, true = alarm active
+        Write: false = clears flag, true = flag unchanged
+    tf:
+      base: bool
+      start: 2
+      description: |
+        Timer flag.
+        Read: false = timer inactive, true = timer active
+        Write: false = clears flag, true = flag unchanged
+    aie:
+      base: bool
+      start: 1
+      description: |
+        Alarm interrupt enable.
+        - false (0): Alarm interrupt disabled
+        - true (1): Alarm interrupt enabled
+    tie:
+      base: bool
+      start: 0
+      description: |
+        Timer interrupt enable.
+        - false (0): Timer interrupt disabled
+        - true (1): Timer interrupt enabled
+
+# =============================================================================
+# TIME AND DATE REGISTERS
+# =============================================================================
+
+Seconds:
+  type: register
+  address: 0x02
+  size_bits: 8
+  access: RW
+  description: |
+    Seconds register with voltage-low flag.
+    Seconds are BCD encoded (0-59).
+  fields:
+    vl:
+      base: bool
+      start: 7
+      description: |
+        Voltage-low flag (clock integrity indicator).
+        - false (0): Clock integrity guaranteed
+        - true (1): Clock integrity not guaranteed (set at power-on)
+        Must be cleared by software after setting time.
+    seconds_ten:
+      base: uint
+      start: 4
+      end: 7
+      description: |
+        Seconds ten's digit (BCD, 0-5).
+    seconds_unit:
+      base: uint
+      start: 0
+      end: 4
+      description: |
+        Seconds unit digit (BCD, 0-9).
+
+Minutes:
+  type: register
+  address: 0x03
+  size_bits: 8
+  access: RW
+  description: |
+    Minutes register.
+    Minutes are BCD encoded (0-59).
+  fields:
+    minutes_ten:
+      base: uint
+      start: 4
+      end: 7
+      description: |
+        Minutes ten's digit (BCD, 0-5).
+    minutes_unit:
+      base: uint
+      start: 0
+      end: 4
+      description: |
+        Minutes unit digit (BCD, 0-9).
+
+Hours:
+  type: register
+  address: 0x04
+  size_bits: 8
+  access: RW
+  description: |
+    Hours register.
+    Hours are BCD encoded (0-23, 24-hour format).
+  fields:
+    hours_ten:
+      base: uint
+      start: 4
+      end: 6
+      description: |
+        Hours ten's digit (BCD, 0-2).
+    hours_unit:
+      base: uint
+      start: 0
+      end: 4
+      description: |
+        Hours unit digit (BCD, 0-9).
+
+Days:
+  type: register
+  address: 0x05
+  size_bits: 8
+  access: RW
+  description: |
+    Days register.
+    Days are BCD encoded (1-31).
+  fields:
+    days_ten:
+      base: uint
+      start: 4
+      end: 6
+      description: |
+        Days ten's digit (BCD, 0-3).
+    days_unit:
+      base: uint
+      start: 0
+      end: 4
+      description: |
+        Days unit digit (BCD, 0-9).
+
+Weekdays:
+  type: register
+  address: 0x06
+  size_bits: 8
+  access: RW
+  description: |
+    Weekdays register.
+    Weekday value (0-6, user-definable assignment).
+  fields:
+    weekday:
+      base: uint
+      start: 0
+      end: 3
+      description: |
+        Weekday value (0-6).
+        Default assignment: 0=Sunday, 1=Monday, ..., 6=Saturday
+        (can be reassigned by user)
+
+CenturyMonths:
+  type: register
+  address: 0x07
+  size_bits: 8
+  access: RW
+  description: |
+    Century flag and months register.
+    Months are BCD encoded (1-12).
+  fields:
+    century:
+      base: bool
+      start: 7
+      description: |
+        Century flag.
+        - false (0): Century is X
+        - true (1): Century is X+1
+        Toggled automatically when years overflows from 99 to 00.
+    months_ten:
+      base: uint
+      start: 4
+      end: 5
+      description: |
+        Months ten's digit (BCD, 0-1).
+    months_unit:
+      base: uint
+      start: 0
+      end: 4
+      description: |
+        Months unit digit (BCD, 0-9).
+
+Years:
+  type: register
+  address: 0x08
+  size_bits: 8
+  access: RW
+  description: |
+    Years register.
+    Years are BCD encoded (0-99).
+  fields:
+    years_ten:
+      base: uint
+      start: 4
+      end: 8
+      description: |
+        Years ten's digit (BCD, 0-9).
+    years_unit:
+      base: uint
+      start: 0
+      end: 4
+      description: |
+        Years unit digit (BCD, 0-9).
+
+# =============================================================================
+# ALARM REGISTERS
+# =============================================================================
+
+MinuteAlarm:
+  type: register
+  address: 0x09
+  size_bits: 8
+  access: RW
+  reset_value: 0x80
+  description: |
+    Minute alarm register.
+    Minutes are BCD encoded (0-59).
+  fields:
+    ae_m:
+      base: bool
+      start: 7
+      description: |
+        Minute alarm enable (active low).
+        - false (0): Minute alarm enabled
+        - true (1): Minute alarm disabled (default)
+    minute_alarm_ten:
+      base: uint
+      start: 4
+      end: 7
+      description: |
+        Minute alarm ten's digit (BCD, 0-5).
+    minute_alarm_unit:
+      base: uint
+      start: 0
+      end: 4
+      description: |
+        Minute alarm unit digit (BCD, 0-9).
+
+HourAlarm:
+  type: register
+  address: 0x0A
+  size_bits: 8
+  access: RW
+  reset_value: 0x80
+  description: |
+    Hour alarm register.
+    Hours are BCD encoded (0-23).
+  fields:
+    ae_h:
+      base: bool
+      start: 7
+      description: |
+        Hour alarm enable (active low).
+        - false (0): Hour alarm enabled
+        - true (1): Hour alarm disabled (default)
+    hour_alarm_ten:
+      base: uint
+      start: 4
+      end: 6
+      description: |
+        Hour alarm ten's digit (BCD, 0-2).
+    hour_alarm_unit:
+      base: uint
+      start: 0
+      end: 4
+      description: |
+        Hour alarm unit digit (BCD, 0-9).
+
+DayAlarm:
+  type: register
+  address: 0x0B
+  size_bits: 8
+  access: RW
+  reset_value: 0x80
+  description: |
+    Day alarm register.
+    Days are BCD encoded (1-31).
+  fields:
+    ae_d:
+      base: bool
+      start: 7
+      description: |
+        Day alarm enable (active low).
+        - false (0): Day alarm enabled
+        - true (1): Day alarm disabled (default)
+    day_alarm_ten:
+      base: uint
+      start: 4
+      end: 6
+      description: |
+        Day alarm ten's digit (BCD, 0-3).
+    day_alarm_unit:
+      base: uint
+      start: 0
+      end: 4
+      description: |
+        Day alarm unit digit (BCD, 0-9).
+
+WeekdayAlarm:
+  type: register
+  address: 0x0C
+  size_bits: 8
+  access: RW
+  reset_value: 0x80
+  description: |
+    Weekday alarm register.
+  fields:
+    ae_w:
+      base: bool
+      start: 7
+      description: |
+        Weekday alarm enable (active low).
+        - false (0): Weekday alarm enabled
+        - true (1): Weekday alarm disabled (default)
+    weekday_alarm:
+      base: uint
+      start: 0
+      end: 3
+      description: |
+        Weekday alarm value (0-6).
+
+# =============================================================================
+# CLOCK OUTPUT CONTROL
+# =============================================================================
+
+ClkoutControl:
+  type: register
+  address: 0x0D
+  size_bits: 8
+  access: RW
+  reset_value: 0x80
+  description: |
+    CLKOUT frequency control register.
+  fields:
+    fe:
+      base: bool
+      start: 7
+      description: |
+        CLKOUT enable.
+        - false (0): CLKOUT inhibited (high-impedance)
+        - true (1): CLKOUT active (default)
+    fd:
+      base: uint
+      start: 0
+      end: 2
+      description: |
+        CLKOUT frequency selection.
+      conversion:
+        name: ClkoutFrequency
+        description: CLKOUT output frequency selection
+        Freq32768Hz:
+          value: 0b00
+          description: "32.768 kHz (default)"
+        Freq1024Hz:
+          value: 0b01
+          description: "1.024 kHz"
+        Freq32Hz:
+          value: 0b10
+          description: "32 Hz"
+        Freq1Hz:
+          value: 0b11
+          description: "1 Hz"
+
+# =============================================================================
+# TIMER CONTROL
+# =============================================================================
+
+TimerControl:
+  type: register
+  address: 0x0E
+  size_bits: 8
+  access: RW
+  reset_value: 0x03
+  description: |
+    Timer control register.
+  fields:
+    te:
+      base: bool
+      start: 7
+      description: |
+        Timer enable.
+        - false (0): Timer disabled (default)
+        - true (1): Timer enabled
+    td:
+      base: uint
+      start: 0
+      end: 2
+      description: |
+        Timer source clock frequency selection.
+        When not in use, set to 1/60 Hz for power saving.
+      conversion:
+        name: TimerFrequency
+        description: Timer source clock frequency
+        Freq4096Hz:
+          value: 0b00
+          description: "4096 Hz"
+        Freq64Hz:
+          value: 0b01
+          description: "64 Hz"
+        Freq1Hz:
+          value: 0b10
+          description: "1 Hz (1 second resolution)"
+        Freq1_60Hz:
+          value: 0b11
+          description: "1/60 Hz (1 minute resolution, default, lowest power)"
+
+Timer:
+  type: register
+  address: 0x0F
+  size_bits: 8
+  access: RW
+  description: |
+    Timer countdown value register.
+    8-bit binary countdown timer (0-255).
+    Countdown period = n / source_clock_frequency
+    When read, returns current countdown value.
+  fields:
+    timer_value:
+      base: uint
+      start: 0
+      end: 8
+      description: |
+        Timer countdown value (0-255).
