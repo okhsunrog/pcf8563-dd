@@ -14,6 +14,9 @@
 //! *   **Type-Safe API:** High-level functions for reading/setting date and time
 //!     and a generated low-level API (`ll`) for direct register access.
 //! *   **Full RTC Functionality:** Date/time, alarms, timer, and clock output control.
+//! *   **Optional `rtcc` Traits (blocking):** Enable the `rtcc` feature to implement
+//!     [`rtcc::DateTimeAccess`](https://docs.rs/rtcc/latest/rtcc/trait.DateTimeAccess.html)
+//!     and [`rtcc::Rtcc`](https://docs.rs/rtcc/latest/rtcc/trait.Rtcc.html) on the blocking driver.
 //! *   **`defmt` and `log` Integration:** Optional support for logging and debugging.
 //!
 //! ## Getting Started

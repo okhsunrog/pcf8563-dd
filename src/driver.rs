@@ -3,6 +3,12 @@ use crate::{
     Alarm, ClkoutFrequency, DateTime, PCF8563_I2C_ADDR, Pcf8563Interface, Pcf8563LowLevel,
     RtcError, Time, TimerFrequency, bcd_to_dec, dec_to_bcd,
 };
+#[cfg(feature = "rtcc")]
+#[only_sync]
+use rtcc::{
+    Datelike as RtccDatelike, Hours as RtccHours, NaiveDate as RtccNaiveDate,
+    NaiveDateTime as RtccNaiveDateTime, NaiveTime as RtccNaiveTime, Timelike as RtccTimelike,
+};
 
 #[bisync]
 impl<I2CBus, E> RegisterInterface for Pcf8563Interface<I2CBus>
@@ -615,5 +621,205 @@ where
         self.set_timer_frequency(TimerFrequency::Freq160Hz).await?;
 
         Ok(())
+    }
+}
+
+#[cfg(feature = "rtcc")]
+#[only_sync]
+impl<I2CImpl, I2CBusErr> rtcc::DateTimeAccess for Pcf8563<I2CImpl, I2CBusErr>
+where
+    I2CImpl: RegisterInterface<AddressType = u8, Error = RtcError<I2CBusErr>>,
+    I2CBusErr: core::fmt::Debug,
+{
+    type Error = RtcError<I2CBusErr>;
+
+    fn datetime(&mut self) -> Result<RtccNaiveDateTime, Self::Error> {
+        let dt = self.get_datetime()?;
+        let century_flag = self.get_century_flag()?;
+        let base_year = if century_flag { 1900 } else { 2000 };
+
+        let date =
+            RtccNaiveDate::from_ymd_opt(base_year + dt.year as i32, dt.month as u32, dt.day as u32)
+                .ok_or(RtcError::InvalidInputData)?;
+        let time =
+            RtccNaiveTime::from_hms_opt(dt.hours as u32, dt.minutes as u32, dt.seconds as u32)
+                .ok_or(RtcError::InvalidInputData)?;
+
+        Ok(RtccNaiveDateTime::new(date, time))
+    }
+
+    fn set_datetime(&mut self, datetime: &RtccNaiveDateTime) -> Result<(), Self::Error> {
+        let date = datetime.date();
+        let time = datetime.time();
+        let year = date.year();
+
+        if !(1900..=2099).contains(&year) {
+            return Err(RtcError::InvalidInputData);
+        }
+
+        let dt = DateTime {
+            year: (year % 100) as u8,
+            month: date.month() as u8,
+            day: date.day() as u8,
+            weekday: date.weekday().num_days_from_sunday() as u8,
+            hours: time.hour() as u8,
+            minutes: time.minute() as u8,
+            seconds: time.second() as u8,
+        };
+
+        self.set_century_flag(year < 2000)?;
+        self.set_datetime(&dt)
+    }
+}
+
+#[cfg(feature = "rtcc")]
+#[only_sync]
+impl<I2CImpl, I2CBusErr> rtcc::Rtcc for Pcf8563<I2CImpl, I2CBusErr>
+where
+    I2CImpl: RegisterInterface<AddressType = u8, Error = RtcError<I2CBusErr>>,
+    I2CBusErr: core::fmt::Debug,
+{
+    fn seconds(&mut self) -> Result<u8, Self::Error> {
+        Ok(self.get_datetime()?.seconds)
+    }
+
+    fn minutes(&mut self) -> Result<u8, Self::Error> {
+        Ok(self.get_datetime()?.minutes)
+    }
+
+    fn hours(&mut self) -> Result<RtccHours, Self::Error> {
+        let hours = self.get_datetime()?.hours;
+        if hours > 23 {
+            Err(RtcError::InvalidInputData)
+        } else {
+            Ok(RtccHours::H24(hours))
+        }
+    }
+
+    fn time(&mut self) -> Result<RtccNaiveTime, Self::Error> {
+        let dt = self.get_datetime()?;
+        RtccNaiveTime::from_hms_opt(dt.hours as u32, dt.minutes as u32, dt.seconds as u32)
+            .ok_or(RtcError::InvalidInputData)
+    }
+
+    fn weekday(&mut self) -> Result<u8, Self::Error> {
+        let weekday = self.get_datetime()?.weekday;
+        if weekday > 6 {
+            Err(RtcError::InvalidInputData)
+        } else {
+            Ok(weekday + 1)
+        }
+    }
+
+    fn day(&mut self) -> Result<u8, Self::Error> {
+        Ok(self.get_datetime()?.day)
+    }
+
+    fn month(&mut self) -> Result<u8, Self::Error> {
+        Ok(self.get_datetime()?.month)
+    }
+
+    fn year(&mut self) -> Result<u16, Self::Error> {
+        let datetime = <Self as rtcc::DateTimeAccess>::datetime(self)?;
+        Ok(datetime.date().year() as u16)
+    }
+
+    fn date(&mut self) -> Result<RtccNaiveDate, Self::Error> {
+        Ok(<Self as rtcc::DateTimeAccess>::datetime(self)?.date())
+    }
+
+    fn set_seconds(&mut self, seconds: u8) -> Result<(), Self::Error> {
+        let mut dt = self.get_datetime()?;
+        dt.seconds = seconds;
+        self.set_datetime(&dt)
+    }
+
+    fn set_minutes(&mut self, minutes: u8) -> Result<(), Self::Error> {
+        let mut dt = self.get_datetime()?;
+        dt.minutes = minutes;
+        self.set_datetime(&dt)
+    }
+
+    fn set_hours(&mut self, hours: RtccHours) -> Result<(), Self::Error> {
+        let hours_24 = match hours {
+            RtccHours::H24(h) if h < 24 => h,
+            RtccHours::AM(h) if (1..=12).contains(&h) => {
+                if h == 12 {
+                    0
+                } else {
+                    h
+                }
+            }
+            RtccHours::PM(h) if (1..=12).contains(&h) => {
+                if h == 12 {
+                    12
+                } else {
+                    h + 12
+                }
+            }
+            _ => return Err(RtcError::InvalidInputData),
+        };
+
+        let mut dt = self.get_datetime()?;
+        dt.hours = hours_24;
+        self.set_datetime(&dt)
+    }
+
+    fn set_time(&mut self, time: &RtccNaiveTime) -> Result<(), Self::Error> {
+        let time = Time {
+            hours: time.hour() as u8,
+            minutes: time.minute() as u8,
+            seconds: time.second() as u8,
+        };
+        self.set_time(&time)
+    }
+
+    fn set_weekday(&mut self, weekday: u8) -> Result<(), Self::Error> {
+        if !(1..=7).contains(&weekday) {
+            return Err(RtcError::InvalidInputData);
+        }
+
+        let mut dt = self.get_datetime()?;
+        dt.weekday = weekday - 1;
+        self.set_datetime(&dt)
+    }
+
+    fn set_day(&mut self, day: u8) -> Result<(), Self::Error> {
+        let mut dt = self.get_datetime()?;
+        dt.day = day;
+        self.set_datetime(&dt)
+    }
+
+    fn set_month(&mut self, month: u8) -> Result<(), Self::Error> {
+        let mut dt = self.get_datetime()?;
+        dt.month = month;
+        self.set_datetime(&dt)
+    }
+
+    fn set_year(&mut self, year: u16) -> Result<(), Self::Error> {
+        if !(1900..=2099).contains(&year) {
+            return Err(RtcError::InvalidInputData);
+        }
+
+        let mut dt = self.get_datetime()?;
+        dt.year = (year % 100) as u8;
+        self.set_century_flag(year < 2000)?;
+        self.set_datetime(&dt)
+    }
+
+    fn set_date(&mut self, date: &RtccNaiveDate) -> Result<(), Self::Error> {
+        let year = date.year();
+        if !(1900..=2099).contains(&year) {
+            return Err(RtcError::InvalidInputData);
+        }
+
+        let mut dt = self.get_datetime()?;
+        dt.year = (year % 100) as u8;
+        dt.month = date.month() as u8;
+        dt.day = date.day() as u8;
+        dt.weekday = date.weekday().num_days_from_sunday() as u8;
+
+        self.set_century_flag(year < 2000)?;
+        self.set_datetime(&dt)
     }
 }

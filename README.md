@@ -17,6 +17,7 @@ The `pcf8563-dd` driver offers:
   - Low-level API (via the `ll` field) offers direct, type-safe access to all registers defined in `device.yaml`.
 - **`no_std` and `no-alloc`:** Optimized for bare-metal and RTOS environments.
 - **Optional Logging:** Supports `defmt` and the `log` facade for debugging.
+- **Optional `rtcc` Traits (blocking):** Enable the `rtcc` feature to get `rtcc::DateTimeAccess` and `rtcc::Rtcc` implementations for the blocking driver.
 
 ## Features
 
@@ -40,7 +41,7 @@ The `pcf8563-dd` driver offers:
 
    ```toml
    [dependencies]
-   pcf8563-dd = "0.1.0"
+   pcf8563-dd = "0.2.0"
    # For blocking usage (Pcf8563):
    embedded-hal = "1.0.0"
    # For async usage (Pcf8563Async):
@@ -279,6 +280,7 @@ Examples for ESP32 using `esp-hal` are included. Both examples demonstrate high-
 - **`std`**: Enables `std` features for `thiserror`.
 - **`log`**: Enables `log` facade logging.
 - **`defmt`**: Enables `defmt` logging for embedded debugging.
+- **`rtcc`**: Implements `rtcc::DateTimeAccess` and `rtcc::Rtcc` for the blocking driver.
 
 ## Timer Frequencies
 
