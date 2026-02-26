@@ -82,50 +82,36 @@ where
 
     /// Get the current date and time
     ///
-    /// Reads all 7 time/date registers in one operation as recommended by datasheet.
+    /// Reads all 7 time/date registers (0x02-0x08) in a single I2C burst read,
+    /// as recommended by the datasheet to ensure consistency.
     #[bisync]
     pub async fn get_datetime(&mut self) -> Result<DateTime, RtcError<I2CBusErr>> {
-        let mut op_sec = self.ll.seconds();
-        let seconds_reg = read_internal(&mut op_sec).await?;
-
-        let mut op_min = self.ll.minutes();
-        let minutes_reg = read_internal(&mut op_min).await?;
-
-        let mut op_hr = self.ll.hours();
-        let hours_reg = read_internal(&mut op_hr).await?;
-
-        let mut op_day = self.ll.days();
-        let days_reg = read_internal(&mut op_day).await?;
-
-        let mut op_wd = self.ll.weekdays();
-        let weekdays_reg = read_internal(&mut op_wd).await?;
-
-        let mut op_mon = self.ll.century_months();
-        let months_reg = read_internal(&mut op_mon).await?;
-
-        let mut op_yr = self.ll.years();
-        let years_reg = read_internal(&mut op_yr).await?;
+        // Bulk read registers 0x02-0x08 (7 bytes) in one I2C transaction:
+        // buf[0]: Seconds (+ VL flag in bit 7)
+        // buf[1]: Minutes
+        // buf[2]: Hours
+        // buf[3]: Days
+        // buf[4]: Weekdays
+        // buf[5]: Century/Months (century flag in bit 7)
+        // buf[6]: Years
+        let mut buf = [0u8; 7];
+        self.ll.interface().read_register(0x02, 0, &mut buf).await?;
 
         Ok(DateTime {
-            seconds: bcd_to_dec(
-                (seconds_reg.seconds_ten() << 4) as u8 | seconds_reg.seconds_unit() as u8,
-            ),
-            minutes: bcd_to_dec(
-                (minutes_reg.minutes_ten() << 4) as u8 | minutes_reg.minutes_unit() as u8,
-            ),
-            hours: bcd_to_dec((hours_reg.hours_ten() << 4) as u8 | hours_reg.hours_unit() as u8),
-            day: bcd_to_dec((days_reg.days_ten() << 4) as u8 | days_reg.days_unit() as u8),
-            weekday: weekdays_reg.weekday() as u8,
-            month: bcd_to_dec(
-                (months_reg.months_ten() << 4) as u8 | months_reg.months_unit() as u8,
-            ),
-            year: bcd_to_dec((years_reg.years_ten() << 4) as u8 | years_reg.years_unit() as u8),
+            seconds: bcd_to_dec(buf[0] & 0x7F), // mask VL flag
+            minutes: bcd_to_dec(buf[1] & 0x7F),
+            hours: bcd_to_dec(buf[2] & 0x3F),
+            day: bcd_to_dec(buf[3] & 0x3F),
+            weekday: buf[4] & 0x07,
+            month: bcd_to_dec(buf[5] & 0x1F), // mask century flag
+            year: bcd_to_dec(buf[6]),
         })
     }
 
     /// Set the date and time
     ///
-    /// Sets all 7 time/date registers in sequence. Also clears the VL flag.
+    /// Writes all 7 time/date registers (0x02-0x08) in a single I2C burst write.
+    /// Also clears the VL (voltage-low) flag.
     #[bisync]
     pub async fn set_datetime(&mut self, dt: &DateTime) -> Result<(), RtcError<I2CBusErr>> {
         // Validate input
@@ -142,62 +128,17 @@ where
             return Err(RtcError::InvalidInputData);
         }
 
-        let seconds_bcd = dec_to_bcd(dt.seconds);
-        let minutes_bcd = dec_to_bcd(dt.minutes);
-        let hours_bcd = dec_to_bcd(dt.hours);
-        let days_bcd = dec_to_bcd(dt.day);
-        let months_bcd = dec_to_bcd(dt.month);
-        let years_bcd = dec_to_bcd(dt.year);
-
-        // Write seconds (also clears VL flag)
-        let mut op_sec = self.ll.seconds();
-        write_internal(&mut op_sec, |r| {
-            r.set_vl(false);
-            r.set_seconds_ten(seconds_bcd >> 4);
-            r.set_seconds_unit(seconds_bcd & 0x0F);
-        })
-        .await?;
-
-        let mut op_min = self.ll.minutes();
-        write_internal(&mut op_min, |r| {
-            r.set_minutes_ten(minutes_bcd >> 4);
-            r.set_minutes_unit(minutes_bcd & 0x0F);
-        })
-        .await?;
-
-        let mut op_hr = self.ll.hours();
-        write_internal(&mut op_hr, |r| {
-            r.set_hours_ten(hours_bcd >> 4);
-            r.set_hours_unit(hours_bcd & 0x0F);
-        })
-        .await?;
-
-        let mut op_day = self.ll.days();
-        write_internal(&mut op_day, |r| {
-            r.set_days_ten(days_bcd >> 4);
-            r.set_days_unit(days_bcd & 0x0F);
-        })
-        .await?;
-
-        let mut op_wd = self.ll.weekdays();
-        write_internal(&mut op_wd, |r| {
-            r.set_weekday(dt.weekday);
-        })
-        .await?;
-
-        let mut op_mon = self.ll.century_months();
-        write_internal(&mut op_mon, |r| {
-            r.set_months_ten(months_bcd >> 4);
-            r.set_months_unit(months_bcd & 0x0F);
-        })
-        .await?;
-
-        let mut op_yr = self.ll.years();
-        write_internal(&mut op_yr, |r| {
-            r.set_years_ten(years_bcd >> 4);
-            r.set_years_unit(years_bcd & 0x0F);
-        })
-        .await?;
+        // Bulk write registers 0x02-0x08 (7 bytes) in one I2C transaction
+        let buf = [
+            dec_to_bcd(dt.seconds) & 0x7F, // seconds with VL flag cleared
+            dec_to_bcd(dt.minutes),
+            dec_to_bcd(dt.hours),
+            dec_to_bcd(dt.day),
+            dt.weekday,
+            dec_to_bcd(dt.month), // preserves century flag as 0
+            dec_to_bcd(dt.year),
+        ];
+        self.ll.interface().write_register(0x02, 0, &buf).await?;
 
         Ok(())
     }

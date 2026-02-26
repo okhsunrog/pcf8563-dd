@@ -1,6 +1,6 @@
 [package]
 name = "pcf8563-dd"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "A driver for the PCF8563/BM8563 real-time clock (uses device-driver crate)"
 authors = ["Danila Gornushko <me@okhsunrog.dev>"]
