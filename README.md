@@ -4,7 +4,7 @@
 [![Docs.rs](https://docs.rs/pcf8563-dd/badge.svg)](https://docs.rs/pcf8563-dd)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](https://opensource.org/licenses)
 
-A `no_std` Rust driver for the NXP PCF8563 and compatible BM8563 real-time clock ICs. This driver leverages the `device-driver` crate with a declarative YAML manifest (`device.ddsl`) for a robust, type-safe register map definition. The low-level API covers 100% of the PCF8563's registers, with `device.ddsl` providing a comprehensive and accurate description of all registers and their fields verified against the official datasheet.
+A `no_std` Rust driver for the NXP PCF8563 and compatible BM8563 real-time clock ICs. This driver leverages the `device-driver` crate with a declarative DDSL manifest (`device.ddsl`) for a robust, type-safe register map definition. The low-level API covers 100% of the PCF8563's registers, with `device.ddsl` providing a comprehensive and accurate description of all registers and their fields verified against the official datasheet.
 
 ## Overview
 

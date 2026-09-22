@@ -7,6 +7,7 @@ authors = ["Danila Gornushko <me@okhsunrog.dev>"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/okhsunrog/pcf8563-dd"
 keywords = ["embedded-hal-driver", "async", "no-std", "rtc", "pcf8563"]
+categories = ["embedded", "no-std", "no-std::no-alloc", "hardware-support"]
 readme = "README.md"
 documentation = "https://docs.rs/pcf8563-dd"
 
