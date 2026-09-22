@@ -97,7 +97,7 @@ fn test_pcf8563(i2c: I2c<'_, Blocking>) -> Result<(), RtcError<I2cError>> {
 
     // Read control status 1 using low-level API
     let ctrl1 = rtc.ll.control_status_1().read()?;
-    info!("Control Status 1 - STOP: {}, TEST1: {}", ctrl1.stop(), ctrl1.test1());
+    info!("Control Status 1 - STOP: {}, TEST1: {}", ctrl1.stop(), ctrl1.test_1());
 
     // Read control status 2 using low-level API
     let ctrl2 = rtc.ll.control_status_2().read()?;

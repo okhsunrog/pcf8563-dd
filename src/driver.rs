@@ -3,6 +3,7 @@ use crate::{
     Alarm, ClkoutFrequency, DateTime, PCF8563_I2C_ADDR, Pcf8563Interface, Pcf8563LowLevel,
     RtcError, Time, TimerFrequency, bcd_to_dec, dec_to_bcd,
 };
+use device_driver::{Block, FieldsetMetadata, RegisterInterfaceBase};
 #[cfg(feature = "rtcc")]
 #[only_sync]
 use rtcc::{
@@ -16,13 +17,11 @@ where
     I2CBus: I2c<Error = E>,
     E: core::fmt::Debug,
 {
-    type AddressType = u8;
-    type Error = RtcError<E>;
     async fn read_register(
         &mut self,
         address: u8,
-        _size_bits: u32,
         data: &mut [u8],
+        _metadata: &FieldsetMetadata,
     ) -> Result<(), Self::Error> {
         self.i2c_bus
             .write_read(PCF8563_I2C_ADDR, &[address], data)
@@ -32,8 +31,8 @@ where
     async fn write_register(
         &mut self,
         address: u8,
-        _size_bits: u32,
-        data: &[u8],
+        data: &mut [u8],
+        _metadata: &FieldsetMetadata,
     ) -> Result<(), Self::Error> {
         let mut buffer = [0u8; 9]; // Max: address + 8 bytes for datetime
         if (1 + data.len()) > buffer.len() {
@@ -49,7 +48,7 @@ where
 }
 
 pub struct Pcf8563<
-    I2CImpl: RegisterInterface<AddressType = u8, Error = RtcError<I2CBusErr>>,
+    I2CImpl: RegisterInterfaceBase<AddressType = u8, Error = RtcError<I2CBusErr>>,
     I2CBusErr: core::fmt::Debug,
 > {
     pub ll: Pcf8563LowLevel<I2CImpl>,
@@ -73,7 +72,8 @@ include!("bisync_helpers.rs");
 
 impl<I2CImpl, I2CBusErr> Pcf8563<I2CImpl, I2CBusErr>
 where
-    I2CImpl: RegisterInterface<AddressType = u8, Error = RtcError<I2CBusErr>>,
+    I2CImpl:
+        RegisterInterface + RegisterInterfaceBase<AddressType = u8, Error = RtcError<I2CBusErr>>,
     I2CBusErr: core::fmt::Debug,
 {
     // =========================================================================
@@ -95,7 +95,10 @@ where
         // buf[5]: Century/Months (century flag in bit 7)
         // buf[6]: Years
         let mut buf = [0u8; 7];
-        self.ll.interface().read_register(0x02, 0, &mut buf).await?;
+        self.ll
+            .interface()
+            .read_register(0x02, &mut buf, &FieldsetMetadata::DEFAULT)
+            .await?;
 
         Ok(DateTime {
             seconds: bcd_to_dec(buf[0] & 0x7F), // mask VL flag
@@ -129,7 +132,7 @@ where
         }
 
         // Bulk write registers 0x02-0x08 (7 bytes) in one I2C transaction
-        let buf = [
+        let mut buf = [
             dec_to_bcd(dt.seconds) & 0x7F, // seconds with VL flag cleared
             dec_to_bcd(dt.minutes),
             dec_to_bcd(dt.hours),
@@ -138,7 +141,10 @@ where
             dec_to_bcd(dt.month), // preserves century flag as 0
             dec_to_bcd(dt.year),
         ];
-        self.ll.interface().write_register(0x02, 0, &buf).await?;
+        self.ll
+            .interface()
+            .write_register(0x02, &mut buf, &FieldsetMetadata::DEFAULT)
+            .await?;
 
         Ok(())
     }
@@ -154,23 +160,23 @@ where
         let minutes_bcd = dec_to_bcd(time.minutes);
         let hours_bcd = dec_to_bcd(time.hours);
 
-        let mut op_sec = self.ll.seconds();
-        write_internal(&mut op_sec, |r| {
+        let op_sec = self.ll.seconds();
+        write_internal(op_sec, |r| {
             r.set_vl(false);
             r.set_seconds_ten(seconds_bcd >> 4);
             r.set_seconds_unit(seconds_bcd & 0x0F);
         })
         .await?;
 
-        let mut op_min = self.ll.minutes();
-        write_internal(&mut op_min, |r| {
+        let op_min = self.ll.minutes();
+        write_internal(op_min, |r| {
             r.set_minutes_ten(minutes_bcd >> 4);
             r.set_minutes_unit(minutes_bcd & 0x0F);
         })
         .await?;
 
-        let mut op_hr = self.ll.hours();
-        write_internal(&mut op_hr, |r| {
+        let op_hr = self.ll.hours();
+        write_internal(op_hr, |r| {
             r.set_hours_ten(hours_bcd >> 4);
             r.set_hours_unit(hours_bcd & 0x0F);
         })
@@ -189,8 +195,8 @@ where
     /// the clock data may be invalid due to power loss.
     #[bisync]
     pub async fn is_clock_valid(&mut self) -> Result<bool, RtcError<I2CBusErr>> {
-        let mut op = self.ll.seconds();
-        let reg = read_internal(&mut op).await?;
+        let op = self.ll.seconds();
+        let reg = read_internal(op).await?;
         Ok(!reg.vl())
     }
 
@@ -199,8 +205,8 @@ where
     /// Should be called after setting the time to indicate clock is valid.
     #[bisync]
     pub async fn clear_voltage_low_flag(&mut self) -> Result<(), RtcError<I2CBusErr>> {
-        let mut op = self.ll.seconds();
-        modify_internal(&mut op, |r| r.set_vl(false)).await
+        let op = self.ll.seconds();
+        modify_internal(op, |r| r.set_vl(false)).await
     }
 
     // =========================================================================
@@ -212,16 +218,16 @@ where
     /// Returns `true` if century is X+1 (e.g., 2100s), `false` if century is X (e.g., 2000s)
     #[bisync]
     pub async fn get_century_flag(&mut self) -> Result<bool, RtcError<I2CBusErr>> {
-        let mut op = self.ll.century_months();
-        let reg = read_internal(&mut op).await?;
+        let op = self.ll.century_months();
+        let reg = read_internal(op).await?;
         Ok(reg.century())
     }
 
     /// Set the century flag
     #[bisync]
     pub async fn set_century_flag(&mut self, century: bool) -> Result<(), RtcError<I2CBusErr>> {
-        let mut op = self.ll.century_months();
-        modify_internal(&mut op, |r| r.set_century(century)).await
+        let op = self.ll.century_months();
+        modify_internal(op, |r| r.set_century(century)).await
     }
 
     // =========================================================================
@@ -231,15 +237,15 @@ where
     /// Start or stop the RTC clock
     #[bisync]
     pub async fn set_clock_running(&mut self, running: bool) -> Result<(), RtcError<I2CBusErr>> {
-        let mut op = self.ll.control_status_1();
-        modify_internal(&mut op, |r| r.set_stop(!running)).await
+        let op = self.ll.control_status_1();
+        modify_internal(op, |r| r.set_stop(!running)).await
     }
 
     /// Check if the RTC clock is running
     #[bisync]
     pub async fn is_clock_running(&mut self) -> Result<bool, RtcError<I2CBusErr>> {
-        let mut op = self.ll.control_status_1();
-        let reg = read_internal(&mut op).await?;
+        let op = self.ll.control_status_1();
+        let reg = read_internal(op).await?;
         Ok(!reg.stop())
     }
 
@@ -250,44 +256,44 @@ where
     /// Get the current alarm configuration
     #[bisync]
     pub async fn get_alarm(&mut self) -> Result<Alarm, RtcError<I2CBusErr>> {
-        let mut op_min = self.ll.minute_alarm();
-        let min_reg = read_internal(&mut op_min).await?;
+        let op_min = self.ll.minute_alarm();
+        let min_reg = read_internal(op_min).await?;
 
-        let mut op_hr = self.ll.hour_alarm();
-        let hr_reg = read_internal(&mut op_hr).await?;
+        let op_hr = self.ll.hour_alarm();
+        let hr_reg = read_internal(op_hr).await?;
 
-        let mut op_day = self.ll.day_alarm();
-        let day_reg = read_internal(&mut op_day).await?;
+        let op_day = self.ll.day_alarm();
+        let day_reg = read_internal(op_day).await?;
 
-        let mut op_wd = self.ll.weekday_alarm();
-        let wd_reg = read_internal(&mut op_wd).await?;
+        let op_wd = self.ll.weekday_alarm();
+        let wd_reg = read_internal(op_wd).await?;
 
         Ok(Alarm {
             minute: if min_reg.ae_m() {
                 None
             } else {
                 Some(bcd_to_dec(
-                    (min_reg.minute_alarm_ten() << 4) as u8 | min_reg.minute_alarm_unit() as u8,
+                    (min_reg.minute_alarm_ten() << 4) | min_reg.minute_alarm_unit(),
                 ))
             },
             hour: if hr_reg.ae_h() {
                 None
             } else {
                 Some(bcd_to_dec(
-                    (hr_reg.hour_alarm_ten() << 4) as u8 | hr_reg.hour_alarm_unit() as u8,
+                    (hr_reg.hour_alarm_ten() << 4) | hr_reg.hour_alarm_unit(),
                 ))
             },
             day: if day_reg.ae_d() {
                 None
             } else {
                 Some(bcd_to_dec(
-                    (day_reg.day_alarm_ten() << 4) as u8 | day_reg.day_alarm_unit() as u8,
+                    (day_reg.day_alarm_ten() << 4) | day_reg.day_alarm_unit(),
                 ))
             },
             weekday: if wd_reg.ae_w() {
                 None
             } else {
-                Some(wd_reg.weekday_alarm() as u8)
+                Some(wd_reg.weekday_alarm())
             },
         })
     }
@@ -299,8 +305,8 @@ where
     #[bisync]
     pub async fn set_alarm(&mut self, alarm: &Alarm) -> Result<(), RtcError<I2CBusErr>> {
         // Minute alarm
-        let mut op_min = self.ll.minute_alarm();
-        write_internal(&mut op_min, |r| {
+        let op_min = self.ll.minute_alarm();
+        write_internal(op_min, |r| {
             if let Some(min) = alarm.minute {
                 let bcd = dec_to_bcd(min);
                 r.set_ae_m(false); // Enable
@@ -313,8 +319,8 @@ where
         .await?;
 
         // Hour alarm
-        let mut op_hr = self.ll.hour_alarm();
-        write_internal(&mut op_hr, |r| {
+        let op_hr = self.ll.hour_alarm();
+        write_internal(op_hr, |r| {
             if let Some(hr) = alarm.hour {
                 let bcd = dec_to_bcd(hr);
                 r.set_ae_h(false); // Enable
@@ -327,8 +333,8 @@ where
         .await?;
 
         // Day alarm
-        let mut op_day = self.ll.day_alarm();
-        write_internal(&mut op_day, |r| {
+        let op_day = self.ll.day_alarm();
+        write_internal(op_day, |r| {
             if let Some(day) = alarm.day {
                 let bcd = dec_to_bcd(day);
                 r.set_ae_d(false); // Enable
@@ -341,8 +347,8 @@ where
         .await?;
 
         // Weekday alarm
-        let mut op_wd = self.ll.weekday_alarm();
-        write_internal(&mut op_wd, |r| {
+        let op_wd = self.ll.weekday_alarm();
+        write_internal(op_wd, |r| {
             if let Some(wd) = alarm.weekday {
                 r.set_ae_w(false); // Enable
                 r.set_weekday_alarm(wd);
@@ -364,30 +370,30 @@ where
     /// Check if alarm flag is set (alarm has triggered)
     #[bisync]
     pub async fn get_alarm_flag(&mut self) -> Result<bool, RtcError<I2CBusErr>> {
-        let mut op = self.ll.control_status_2();
-        let reg = read_internal(&mut op).await?;
+        let op = self.ll.control_status_2();
+        let reg = read_internal(op).await?;
         Ok(reg.af())
     }
 
     /// Clear the alarm flag
     #[bisync]
     pub async fn clear_alarm_flag(&mut self) -> Result<(), RtcError<I2CBusErr>> {
-        let mut op = self.ll.control_status_2();
-        modify_internal(&mut op, |r| r.set_af(false)).await
+        let op = self.ll.control_status_2();
+        modify_internal(op, |r| r.set_af(false)).await
     }
 
     /// Enable or disable alarm interrupt
     #[bisync]
     pub async fn set_alarm_interrupt(&mut self, enable: bool) -> Result<(), RtcError<I2CBusErr>> {
-        let mut op = self.ll.control_status_2();
-        modify_internal(&mut op, |r| r.set_aie(enable)).await
+        let op = self.ll.control_status_2();
+        modify_internal(op, |r| r.set_aie(enable)).await
     }
 
     /// Check if alarm interrupt is enabled
     #[bisync]
     pub async fn is_alarm_interrupt_enabled(&mut self) -> Result<bool, RtcError<I2CBusErr>> {
-        let mut op = self.ll.control_status_2();
-        let reg = read_internal(&mut op).await?;
+        let op = self.ll.control_status_2();
+        let reg = read_internal(op).await?;
         Ok(reg.aie())
     }
 
@@ -398,16 +404,16 @@ where
     /// Set the timer countdown value (0-255)
     #[bisync]
     pub async fn set_timer_value(&mut self, value: u8) -> Result<(), RtcError<I2CBusErr>> {
-        let mut op = self.ll.timer();
-        write_internal(&mut op, |r| r.set_timer_value(value)).await
+        let op = self.ll.timer();
+        write_internal(op, |r| r.set_timer_value(value)).await
     }
 
     /// Get the current timer countdown value
     #[bisync]
     pub async fn get_timer_value(&mut self) -> Result<u8, RtcError<I2CBusErr>> {
-        let mut op = self.ll.timer();
-        let reg = read_internal(&mut op).await?;
-        Ok(reg.timer_value() as u8)
+        let op = self.ll.timer();
+        let reg = read_internal(op).await?;
+        Ok(reg.timer_value())
     }
 
     /// Set the timer source clock frequency
@@ -416,60 +422,60 @@ where
         &mut self,
         freq: TimerFrequency,
     ) -> Result<(), RtcError<I2CBusErr>> {
-        let mut op = self.ll.timer_control();
-        modify_internal(&mut op, |r| r.set_td(freq)).await
+        let op = self.ll.timer_control();
+        modify_internal(op, |r| r.set_td(freq)).await
     }
 
     /// Get the timer source clock frequency
     #[bisync]
     pub async fn get_timer_frequency(&mut self) -> Result<TimerFrequency, RtcError<I2CBusErr>> {
-        let mut op = self.ll.timer_control();
-        let reg = read_internal(&mut op).await?;
+        let op = self.ll.timer_control();
+        let reg = read_internal(op).await?;
         Ok(reg.td())
     }
 
     /// Enable or disable the timer
     #[bisync]
     pub async fn set_timer_enabled(&mut self, enable: bool) -> Result<(), RtcError<I2CBusErr>> {
-        let mut op = self.ll.timer_control();
-        modify_internal(&mut op, |r| r.set_te(enable)).await
+        let op = self.ll.timer_control();
+        modify_internal(op, |r| r.set_te(enable)).await
     }
 
     /// Check if timer is enabled
     #[bisync]
     pub async fn is_timer_enabled(&mut self) -> Result<bool, RtcError<I2CBusErr>> {
-        let mut op = self.ll.timer_control();
-        let reg = read_internal(&mut op).await?;
+        let op = self.ll.timer_control();
+        let reg = read_internal(op).await?;
         Ok(reg.te())
     }
 
     /// Check if timer flag is set (timer has triggered)
     #[bisync]
     pub async fn get_timer_flag(&mut self) -> Result<bool, RtcError<I2CBusErr>> {
-        let mut op = self.ll.control_status_2();
-        let reg = read_internal(&mut op).await?;
+        let op = self.ll.control_status_2();
+        let reg = read_internal(op).await?;
         Ok(reg.tf())
     }
 
     /// Clear the timer flag
     #[bisync]
     pub async fn clear_timer_flag(&mut self) -> Result<(), RtcError<I2CBusErr>> {
-        let mut op = self.ll.control_status_2();
-        modify_internal(&mut op, |r| r.set_tf(false)).await
+        let op = self.ll.control_status_2();
+        modify_internal(op, |r| r.set_tf(false)).await
     }
 
     /// Enable or disable timer interrupt
     #[bisync]
     pub async fn set_timer_interrupt(&mut self, enable: bool) -> Result<(), RtcError<I2CBusErr>> {
-        let mut op = self.ll.control_status_2();
-        modify_internal(&mut op, |r| r.set_tie(enable)).await
+        let op = self.ll.control_status_2();
+        modify_internal(op, |r| r.set_tie(enable)).await
     }
 
     /// Check if timer interrupt is enabled
     #[bisync]
     pub async fn is_timer_interrupt_enabled(&mut self) -> Result<bool, RtcError<I2CBusErr>> {
-        let mut op = self.ll.control_status_2();
-        let reg = read_internal(&mut op).await?;
+        let op = self.ll.control_status_2();
+        let reg = read_internal(op).await?;
         Ok(reg.tie())
     }
 
@@ -479,8 +485,8 @@ where
         &mut self,
         pulse: bool,
     ) -> Result<(), RtcError<I2CBusErr>> {
-        let mut op = self.ll.control_status_2();
-        modify_internal(&mut op, |r| r.set_ti_tp(pulse)).await
+        let op = self.ll.control_status_2();
+        modify_internal(op, |r| r.set_ti_tp(pulse)).await
     }
 
     // =========================================================================
@@ -490,15 +496,15 @@ where
     /// Enable or disable the CLKOUT output
     #[bisync]
     pub async fn set_clkout_enabled(&mut self, enable: bool) -> Result<(), RtcError<I2CBusErr>> {
-        let mut op = self.ll.clkout_control();
-        modify_internal(&mut op, |r| r.set_fe(enable)).await
+        let op = self.ll.clkout_control();
+        modify_internal(op, |r| r.set_fe(enable)).await
     }
 
     /// Check if CLKOUT is enabled
     #[bisync]
     pub async fn is_clkout_enabled(&mut self) -> Result<bool, RtcError<I2CBusErr>> {
-        let mut op = self.ll.clkout_control();
-        let reg = read_internal(&mut op).await?;
+        let op = self.ll.clkout_control();
+        let reg = read_internal(op).await?;
         Ok(reg.fe())
     }
 
@@ -508,15 +514,15 @@ where
         &mut self,
         freq: ClkoutFrequency,
     ) -> Result<(), RtcError<I2CBusErr>> {
-        let mut op = self.ll.clkout_control();
-        modify_internal(&mut op, |r| r.set_fd(freq)).await
+        let op = self.ll.clkout_control();
+        modify_internal(op, |r| r.set_fd(freq)).await
     }
 
     /// Get the CLKOUT frequency setting
     #[bisync]
     pub async fn get_clkout_frequency(&mut self) -> Result<ClkoutFrequency, RtcError<I2CBusErr>> {
-        let mut op = self.ll.clkout_control();
-        let reg = read_internal(&mut op).await?;
+        let op = self.ll.clkout_control();
+        let reg = read_internal(op).await?;
         Ok(reg.fd())
     }
 
@@ -533,17 +539,17 @@ where
     #[bisync]
     pub async fn init(&mut self) -> Result<(), RtcError<I2CBusErr>> {
         // Clear control status 1
-        let mut op1 = self.ll.control_status_1();
-        write_internal(&mut op1, |r| {
-            r.set_test1(false);
+        let op1 = self.ll.control_status_1();
+        write_internal(op1, |r| {
+            r.set_test_1(false);
             r.set_stop(false);
             r.set_testc(false);
         })
         .await?;
 
         // Clear control status 2
-        let mut op2 = self.ll.control_status_2();
-        write_internal(&mut op2, |r| {
+        let op2 = self.ll.control_status_2();
+        write_internal(op2, |r| {
             r.set_ti_tp(false);
             r.set_af(false);
             r.set_tf(false);
@@ -569,7 +575,8 @@ where
 #[only_sync]
 impl<I2CImpl, I2CBusErr> rtcc::DateTimeAccess for Pcf8563<I2CImpl, I2CBusErr>
 where
-    I2CImpl: RegisterInterface<AddressType = u8, Error = RtcError<I2CBusErr>>,
+    I2CImpl:
+        RegisterInterface + RegisterInterfaceBase<AddressType = u8, Error = RtcError<I2CBusErr>>,
     I2CBusErr: core::fmt::Debug,
 {
     type Error = RtcError<I2CBusErr>;
@@ -617,7 +624,8 @@ where
 #[only_sync]
 impl<I2CImpl, I2CBusErr> rtcc::Rtcc for Pcf8563<I2CImpl, I2CBusErr>
 where
-    I2CImpl: RegisterInterface<AddressType = u8, Error = RtcError<I2CBusErr>>,
+    I2CImpl:
+        RegisterInterface + RegisterInterfaceBase<AddressType = u8, Error = RtcError<I2CBusErr>>,
     I2CBusErr: core::fmt::Debug,
 {
     fn seconds(&mut self) -> Result<u8, Self::Error> {

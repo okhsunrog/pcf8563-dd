@@ -1,0 +1,312 @@
+/// PCF8563/BM8563 Real-Time Clock Device Driver Definition
+/// This file defines the register map and configuration for the PCF8563
+/// Real-Time Clock IC manufactured by NXP (and BM8563 clone).
+///
+/// Features:
+/// - Year, month, day, weekday, hours, minutes, seconds
+/// - Century flag
+/// - Low backup current (~0.25µA at 3.0V)
+/// - Programmable clock output (32.768kHz, 1.024kHz, 32Hz, 1Hz)
+/// - Alarm and timer functions
+/// - Voltage-low detector
+///
+/// Interface: I2C (up to 400kHz)
+/// Slave address: 0x51 (7-bit) / 0xA2 write, 0xA3 read (8-bit)
+device Pcf8563LowLevel {
+    default-byte-order: BE,
+    register-address-type: u8,
+    // Split on underscores, hyphens, lower->upper and every letter<->digit
+    // transition so `ControlStatus1` becomes `control_status_1`.
+    word-boundaries: "_:-: :bB:A1:1A:1a:a1:AAa",
+    default-access: RW,
+
+    /// Control and status register 1.
+    /// Controls clock operation, test modes, and power-on reset override.
+    register ControlStatus1 {
+        address: 0x00,
+        reset: 0x08,
+        fields: fieldset _ {
+            size-bytes: 1,
+
+            /// EXT_CLK test mode.
+            /// - false (0): Normal mode (default)
+            /// - true (1): EXT_CLK test mode - CLKOUT becomes input for external clock
+            field test1 7,
+            /// RTC clock stop control.
+            /// - false (0): RTC source clock runs
+            /// - true (1): RTC clock stopped, all divider flip-flops reset to 0
+            ///            (CLKOUT at 32.768kHz still available)
+            field stop 5,
+            /// Power-On Reset (POR) override facility.
+            /// - false (0): POR override disabled (normal operation)
+            /// - true (1): POR override may be enabled
+            field testc 3,
+        },
+    },
+    /// Control and status register 2.
+    /// Controls timer/alarm interrupts and flags.
+    register ControlStatus2 {
+        address: 0x01,
+        reset: 0x00,
+        fields: fieldset _ {
+            size-bytes: 1,
+
+            /// Timer interrupt mode.
+            /// - false (0): INT active when TF is active (level mode)
+            /// - true (1): INT pulses active (pulse mode)
+            field ti_tp 4,
+            /// Alarm flag.
+            /// Read: false = alarm inactive, true = alarm active
+            /// Write: false = clears flag, true = flag unchanged
+            field af 3,
+            /// Timer flag.
+            /// Read: false = timer inactive, true = timer active
+            /// Write: false = clears flag, true = flag unchanged
+            field tf 2,
+            /// Alarm interrupt enable.
+            /// - false (0): Alarm interrupt disabled
+            /// - true (1): Alarm interrupt enabled
+            field aie 1,
+            /// Timer interrupt enable.
+            /// - false (0): Timer interrupt disabled
+            /// - true (1): Timer interrupt enabled
+            field tie 0,
+        },
+    },
+    /// Seconds register with voltage-low flag.
+    /// Seconds are BCD encoded (0-59).
+    register Seconds {
+        address: 0x02,
+        fields: fieldset _ {
+            size-bytes: 1,
+
+            /// Voltage-low flag (clock integrity indicator).
+            /// - false (0): Clock integrity guaranteed
+            /// - true (1): Clock integrity not guaranteed (set at power-on)
+            /// Must be cleared by software after setting time.
+            field vl 7,
+            /// Seconds ten's digit (BCD, 0-5).
+            field seconds_ten 6:4,
+            /// Seconds unit digit (BCD, 0-9).
+            field seconds_unit 3:0,
+        },
+    },
+    /// Minutes register.
+    /// Minutes are BCD encoded (0-59).
+    register Minutes {
+        address: 0x03,
+        fields: fieldset _ {
+            size-bytes: 1,
+
+            /// Minutes ten's digit (BCD, 0-5).
+            field minutes_ten 6:4,
+            /// Minutes unit digit (BCD, 0-9).
+            field minutes_unit 3:0,
+        },
+    },
+    /// Hours register.
+    /// Hours are BCD encoded (0-23, 24-hour format).
+    register Hours {
+        address: 0x04,
+        fields: fieldset _ {
+            size-bytes: 1,
+
+            /// Hours ten's digit (BCD, 0-2).
+            field hours_ten 5:4,
+            /// Hours unit digit (BCD, 0-9).
+            field hours_unit 3:0,
+        },
+    },
+    /// Days register.
+    /// Days are BCD encoded (1-31).
+    register Days {
+        address: 0x05,
+        fields: fieldset _ {
+            size-bytes: 1,
+
+            /// Days ten's digit (BCD, 0-3).
+            field days_ten 5:4,
+            /// Days unit digit (BCD, 0-9).
+            field days_unit 3:0,
+        },
+    },
+    /// Weekdays register.
+    /// Weekday value (0-6, user-definable assignment).
+    register Weekdays {
+        address: 0x06,
+        fields: fieldset _ {
+            size-bytes: 1,
+
+            /// Weekday value (0-6).
+            /// Default assignment: 0=Sunday, 1=Monday, ..., 6=Saturday
+            /// (can be reassigned by user)
+            field weekday 2:0,
+        },
+    },
+    /// Century flag and months register.
+    /// Months are BCD encoded (1-12).
+    register CenturyMonths {
+        address: 0x07,
+        fields: fieldset _ {
+            size-bytes: 1,
+
+            /// Century flag.
+            /// - false (0): Century is X
+            /// - true (1): Century is X+1
+            /// Toggled automatically when years overflows from 99 to 00.
+            field century 7,
+            /// Months ten's digit (BCD, 0-1).
+            field months_ten 4,
+            /// Months unit digit (BCD, 0-9).
+            field months_unit 3:0,
+        },
+    },
+    /// Years register.
+    /// Years are BCD encoded (0-99).
+    register Years {
+        address: 0x08,
+        fields: fieldset _ {
+            size-bytes: 1,
+
+            /// Years ten's digit (BCD, 0-9).
+            field years_ten 7:4,
+            /// Years unit digit (BCD, 0-9).
+            field years_unit 3:0,
+        },
+    },
+    /// Minute alarm register.
+    /// Minutes are BCD encoded (0-59).
+    register MinuteAlarm {
+        address: 0x09,
+        reset: 0x80,
+        fields: fieldset _ {
+            size-bytes: 1,
+
+            /// Minute alarm enable (active low).
+            /// - false (0): Minute alarm enabled
+            /// - true (1): Minute alarm disabled (default)
+            field ae_m 7,
+            /// Minute alarm ten's digit (BCD, 0-5).
+            field minute_alarm_ten 6:4,
+            /// Minute alarm unit digit (BCD, 0-9).
+            field minute_alarm_unit 3:0,
+        },
+    },
+    /// Hour alarm register.
+    /// Hours are BCD encoded (0-23).
+    register HourAlarm {
+        address: 0x0A,
+        reset: 0x80,
+        fields: fieldset _ {
+            size-bytes: 1,
+
+            /// Hour alarm enable (active low).
+            /// - false (0): Hour alarm enabled
+            /// - true (1): Hour alarm disabled (default)
+            field ae_h 7,
+            /// Hour alarm ten's digit (BCD, 0-2).
+            field hour_alarm_ten 5:4,
+            /// Hour alarm unit digit (BCD, 0-9).
+            field hour_alarm_unit 3:0,
+        },
+    },
+    /// Day alarm register.
+    /// Days are BCD encoded (1-31).
+    register DayAlarm {
+        address: 0x0B,
+        reset: 0x80,
+        fields: fieldset _ {
+            size-bytes: 1,
+
+            /// Day alarm enable (active low).
+            /// - false (0): Day alarm enabled
+            /// - true (1): Day alarm disabled (default)
+            field ae_d 7,
+            /// Day alarm ten's digit (BCD, 0-3).
+            field day_alarm_ten 5:4,
+            /// Day alarm unit digit (BCD, 0-9).
+            field day_alarm_unit 3:0,
+        },
+    },
+    /// Weekday alarm register.
+    register WeekdayAlarm {
+        address: 0x0C,
+        reset: 0x80,
+        fields: fieldset _ {
+            size-bytes: 1,
+
+            /// Weekday alarm enable (active low).
+            /// - false (0): Weekday alarm enabled
+            /// - true (1): Weekday alarm disabled (default)
+            field ae_w 7,
+            /// Weekday alarm value (0-6).
+            field weekday_alarm 2:0,
+        },
+    },
+    /// CLKOUT frequency control register.
+    register ClkoutControl {
+        address: 0x0D,
+        reset: 0x80,
+        fields: fieldset _ {
+            size-bytes: 1,
+
+            /// CLKOUT enable.
+            /// - false (0): CLKOUT inhibited (high-impedance)
+            /// - true (1): CLKOUT active (default)
+            field fe 7,
+            /// CLKOUT frequency selection.
+            field fd 1:0 -> _ as
+                /// CLKOUT output frequency selection
+                enum ClkoutFrequency {
+                    /// 32.768 kHz (default)
+                    Freq32768Hz: 0,
+                    /// 1.024 kHz
+                    Freq1024Hz: 1,
+                    /// 32 Hz
+                    Freq32Hz: 2,
+                    /// 1 Hz
+                    Freq1Hz: 3,
+                },
+        },
+    },
+    /// Timer control register.
+    register TimerControl {
+        address: 0x0E,
+        reset: 0x03,
+        fields: fieldset _ {
+            size-bytes: 1,
+
+            /// Timer enable.
+            /// - false (0): Timer disabled (default)
+            /// - true (1): Timer enabled
+            field te 7,
+            /// Timer source clock frequency selection.
+            /// When not in use, set to 1/60 Hz for power saving.
+            field td 1:0 -> _ as
+                /// Timer source clock frequency
+                enum TimerFrequency {
+                    /// 4096 Hz
+                    Freq4096Hz: 0,
+                    /// 64 Hz
+                    Freq64Hz: 1,
+                    /// 1 Hz (1 second resolution)
+                    Freq1Hz: 2,
+                    /// 1/60 Hz (1 minute resolution, default, lowest power)
+                    Freq1_60Hz: 3,
+                },
+        },
+    },
+    /// Timer countdown value register.
+    /// 8-bit binary countdown timer (0-255).
+    /// Countdown period = n / source_clock_frequency
+    /// When read, returns current countdown value.
+    register Timer {
+        address: 0x0F,
+        fields: fieldset _ {
+            size-bytes: 1,
+
+            /// Timer countdown value (0-255).
+            field timer_value 7:0,
+        },
+    },
+}
