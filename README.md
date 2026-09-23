@@ -11,7 +11,7 @@ A `no_std` Rust driver for the NXP PCF8563 and compatible BM8563 real-time clock
 The `pcf8563-dd` driver offers:
 
 - **Declarative Configuration:** The PCF8563 register map is defined in [`device.ddsl`](device.ddsl), enabling `device-driver` to generate a type-safe, low-level register access API.
-- **Unified Async/Blocking API:** Uses the [`bisync`](https://github.com/JM4ier/bisync) crate to provide both asynchronous (`Pcf8563Async`) and blocking (`Pcf8563`) drivers from the same codebase, with no feature flags required.
+- **Unified Async/Blocking API:** Uses the [`bisync2`](https://github.com/de-vri-es/bisync2-rs) crate to provide both asynchronous (`Pcf8563Async`) and blocking (`Pcf8563`) drivers from the same codebase, with no feature flags required.
 - **High-Level and Low-Level APIs:**
   - High-level methods simplify tasks like reading/setting date and time, configuring alarms, and managing the timer.
   - Low-level API (via the `ll` field) offers direct, type-safe access to all registers defined in `device.ddsl`.
