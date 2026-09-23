@@ -156,7 +156,7 @@ device Pcf8563LowLevel {
             /// Toggled automatically when years overflows from 99 to 00.
             field century 7,
             /// Months ten's digit (BCD, 0-1).
-            field months_ten 4,
+            field months_ten 4 -> uint,
             /// Months unit digit (BCD, 0-9).
             field months_unit 3:0,
         },
